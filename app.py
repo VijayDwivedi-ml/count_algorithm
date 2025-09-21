@@ -3,6 +3,8 @@ import streamlit as st
 import numpy as np
 import tempfile
 import os
+from PIL import Image
+import io
 
 # File uploader for video
 uploaded_file = st.file_uploader("Upload a video file", type=['mp4', 'avi', 'mov'])
@@ -12,9 +14,6 @@ if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
         tmp_file.write(uploaded_file.getvalue())
         video_path = tmp_file.name
-    
-    # Display the uploaded video using st.video()
-    st.video(uploaded_file)
     
     cap = cv2.VideoCapture(video_path)
     count = 0
@@ -35,20 +34,30 @@ if uploaded_file is not None:
     detector = cv2.SimpleBlobDetector_create(params)
 
     roi_x, roi_y, roi_w, roi_h = 350, 125, 200, 200
-
     counting_line_y = roi_h // 2
-
     tracked_objects = []  
     max_track_frames = 5  
 
     st.title("Box Counter")
+    
+    # Get video properties
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Create temporary video file for output
+    output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+    
     progress_bar = st.progress(0)
     counter_display = st.empty()
+    video_placeholder = st.empty()
     results_display = st.empty()
     
-    # Get total frames for progress bar
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     current_frame = 0
+    processed_frames = []
 
     while True:
         ret, frame = cap.read()
@@ -58,12 +67,13 @@ if uploaded_file is not None:
         current_frame += 1
         progress_bar.progress(current_frame / total_frames)
 
+        # Store original frame for drawing
+        display_frame = frame.copy()
+        
         roi = frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
         _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-
         keypoints = detector.detect(thresh)
 
         current_keypoints = []
@@ -108,20 +118,50 @@ if uploaded_file is not None:
                     count += 1
 
         tracked_objects = [obj for obj in tracked_objects if obj['age'] < max_track_frames]
+
+        # Draw bounding boxes and annotations on the display frame
+        cv2.rectangle(display_frame, (roi_x, roi_y), (roi_x+roi_w, roi_y+roi_h), (0, 0, 255), 2)
+        cv2.line(display_frame, (roi_x, roi_y + counting_line_y), (roi_x + roi_w, roi_y + counting_line_y), (0, 255, 0), 2)
+        
+        # Draw keypoints on ROI
+        for kp in keypoints:
+            x, y = int(kp.pt[0] + roi_x), int(kp.pt[1] + roi_y)
+            cv2.circle(display_frame, (x, y), 10, (0, 0, 255), -1)
+        
+        # Add count text
+        cv2.putText(display_frame, f"Count: {count}", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        # Write frame to output video
+        out.write(display_frame)
+        
+        # Convert to RGB for Streamlit display (optional preview)
+        display_frame_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+        processed_frames.append(display_frame_rgb)
         
         # Update counter display
         counter_display.write(f"**Current Count: {count}**")
+        
+        # Show preview of current frame (optional, can be heavy)
+        if current_frame % 30 == 0:  # Show every 30th frame to reduce load
+            video_placeholder.image(display_frame_rgb, caption=f"Frame {current_frame}")
 
     cap.release()
+    out.release()
     
-    # Show final results
-    results_display.success(f"🎯 **Final Count: {count} boxes detected!**")
+    # Display the processed video with bounding boxes
+    st.success("✅ Processing complete!")
+    st.write(f"**Final Count: {count} boxes detected**")
     
-    # Clean up temporary file
+    # Read the processed video file and display it
+    with open(output_video_path, 'rb') as video_file:
+        video_bytes = video_file.read()
+    
+    st.video(video_bytes)
+    
+    # Clean up temporary files
     os.unlink(video_path)
-    
-    # Optionally show processing complete message
-    st.info("✅ Video processing complete!")
+    os.unlink(output_video_path)
     
 else:
     st.info("Please upload a video file to begin counting")
