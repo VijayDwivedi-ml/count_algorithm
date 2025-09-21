@@ -13,6 +13,9 @@ if uploaded_file is not None:
         tmp_file.write(uploaded_file.getvalue())
         video_path = tmp_file.name
     
+    # Display the uploaded video using st.video()
+    st.video(uploaded_file)
+    
     cap = cv2.VideoCapture(video_path)
     count = 0
 
@@ -39,13 +42,21 @@ if uploaded_file is not None:
     max_track_frames = 5  
 
     st.title("Box Counter")
-    frame_window = st.empty()
-    counter_window = st.empty()
+    progress_bar = st.progress(0)
+    counter_display = st.empty()
+    results_display = st.empty()
+    
+    # Get total frames for progress bar
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    current_frame = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+            
+        current_frame += 1
+        progress_bar.progress(current_frame / total_frames)
 
         roi = frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
 
@@ -97,18 +108,20 @@ if uploaded_file is not None:
                     count += 1
 
         tracked_objects = [obj for obj in tracked_objects if obj['age'] < max_track_frames]
-
-        blobs = cv2.drawKeypoints(roi, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-
-        cv2.rectangle(frame, (roi_x, roi_y), (roi_x+roi_w, roi_y+roi_h), (0, 0, 255), 2)
-        cv2.line(frame, (roi_x, roi_y + counting_line_y), (roi_x + roi_w, roi_y + counting_line_y), (0, 255, 0), 2)
-
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_window.image(frame)
-        counter_window.write(f"Count: {count}")
+        
+        # Update counter display
+        counter_display.write(f"**Current Count: {count}**")
 
     cap.release()
+    
+    # Show final results
+    results_display.success(f"🎯 **Final Count: {count} boxes detected!**")
+    
     # Clean up temporary file
     os.unlink(video_path)
+    
+    # Optionally show processing complete message
+    st.info("✅ Video processing complete!")
+    
 else:
     st.info("Please upload a video file to begin counting")
